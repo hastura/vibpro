@@ -1,13 +1,37 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Sparkles, Activity, CheckCircle2, AlertCircle, Code, FileText, Copy, ChevronDown, Layers, MessageSquare, Briefcase, Palette, Music, Terminal, Command, Loader2 } from 'lucide-react';
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-if (!apiKey) {
-  console.error("VITE_GEMINI_API_KEY is missing! Please check your .env file or GitHub Secrets.");
-}
-const genAI = new GoogleGenerativeAI(apiKey || "dummy_key");
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+
+const callGeminiAPI = async (payload) => {
+  if (!apiKey) {
+    throw new Error("VITE_GEMINI_API_KEY is missing! Please check your .env file or GitHub Secrets.");
+  }
+  
+  let response;
+  let lastErrorText = '';
+  const delays = [1000, 2000, 4000, 8000, 16000];
+  
+  for (let i = 0; i < 6; i++) {
+    try {
+      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (response.ok) return await response.json();
+      
+      lastErrorText = await response.text();
+      // Don't retry on 4xx errors (except 429)
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) break;
+    } catch(err) {
+      lastErrorText = err.message;
+      if (i === 5) throw err;
+    }
+    if (i < 5) await new Promise(r => setTimeout(r, delays[i]));
+  }
+  throw new Error(`API Error ${response?.status || 'Unknown'}: ${lastErrorText || 'Network Error'}`);
+};
 
 // --- KONFIGURASI WORKSPACE ---
 const workspaces = [
@@ -186,7 +210,7 @@ export default function App() {
       const currentElements = frameworkElements[selectedFramework];
       const elementsDesc = currentElements.map(el => `${el.name} (ID: ${el.id})`).join(', ');
       
-      const prompt = `
+      const promptTxt = `
         Analyze the following user prompt for a ${activeWorkspace.name} task using the ${selectedFramework} framework.
         The framework elements are: ${elementsDesc}.
         
@@ -195,11 +219,16 @@ export default function App() {
         For each element, determine if it's found in the prompt. If found, extract the relevant text.
         Return ONLY a JSON array with this structure: [{"id": "element_id", "found": true/false, "extractedText": "..."}]
       `;
+      
+      console.log("Gemini Request Prompt:", promptTxt);
+      
+      const payload = {
+        contents: [{ parts: [{ text: promptTxt }] }]
+      };
 
-      console.log("Gemini Request Prompt:", prompt);
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      const data = await callGeminiAPI(payload);
+      const text = data.candidates[0].content.parts[0].text;
+      
       console.log("Gemini Raw Response:", text);
       
       // Sanitasi response untuk parsing JSON aman
@@ -269,7 +298,7 @@ export default function App() {
         return `${el.name}: ${val}`;
       }).join('\n');
 
-      const prompt = `
+      const promptTxt = `
         Based on these framework elements extracted from a user's intent:
         ${contextData}
         
@@ -288,10 +317,15 @@ export default function App() {
         Use the element IDs as keys inside each suggestion object.
       `;
 
-      console.log("Gemini Suggestion Request:", prompt);
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      console.log("Gemini Suggestion Request:", promptTxt);
+      
+      const payload = {
+        contents: [{ parts: [{ text: promptTxt }] }]
+      };
+
+      const data = await callGeminiAPI(payload);
+      const text = data.candidates[0].content.parts[0].text;
+      
       console.log("Gemini Suggestion Raw Response:", text);
       
       const jsonStart = text.indexOf('{');
