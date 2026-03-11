@@ -7,7 +7,7 @@ if (!apiKey) {
   console.error("VITE_GEMINI_API_KEY is missing! Please check your .env file or GitHub Secrets.");
 }
 const genAI = new GoogleGenerativeAI(apiKey || "dummy_key");
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
 // --- KONFIGURASI WORKSPACE ---
 const workspaces = [
