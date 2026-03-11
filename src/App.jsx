@@ -332,15 +332,34 @@ export default function App() {
       const jsonEnd = text.lastIndexOf('}') + 1;
       
       if (jsonStart === -1 || jsonEnd === 0) {
-        throw new Error("AI did not return a valid JSON object. Response: " + text);
+        throw new Error("AI did not return a valid JSON object. Check console logs for raw response.");
       }
 
       const jsonStr = text.substring(jsonStart, jsonEnd);
-      const aiData = JSON.parse(jsonStr);
+      let aiData;
+      try {
+        aiData = JSON.parse(jsonStr);
+      } catch (e) {
+        // Coba bersihkan karakter kontrol jika parsing gagal
+        aiData = JSON.parse(jsonStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, ""));
+      }
 
-      const sugg1 = { label: '✨ Profesional & Presisi', values: aiData.suggestion1 };
-      const sugg2 = { label: '🔥 Kreatif & Ekspresif', values: aiData.suggestion2 };
+      // Pastikan struktur data konsisten (beberapa AI mungkin pakai camelCase atau lowercase)
+      const getSuggestion = (data, key) => {
+        const potentialKeys = [key, key.toLowerCase(), key.charAt(0).toUpperCase() + key.slice(1)];
+        for (const pk of potentialKeys) {
+          if (data[pk]) return data[pk];
+        }
+        return null;
+      };
 
+      const s1Values = getSuggestion(aiData, 'suggestion1') || getSuggestion(aiData, 'option1') || {};
+      const s2Values = getSuggestion(aiData, 'suggestion2') || getSuggestion(aiData, 'option2') || {};
+
+      const sugg1 = { label: '✨ Profesional & Presisi', values: s1Values };
+      const sugg2 = { label: '🔥 Kreatif & Ekspresif', values: s2Values };
+
+      console.log("Processed Suggestions:", [sugg1, sugg2]);
       setAiSuggestions([sugg1, sugg2]);
     } catch (error) {
       console.error("AI Generation Error:", error);
@@ -360,7 +379,17 @@ export default function App() {
   const getResolvedValue = (id) => {
     // Jika user memilih rekomendasi AI
     if (activeSuggestion !== 'original' && aiSuggestions[activeSuggestion]) {
-      return aiSuggestions[activeSuggestion].values[id] || `[N/A]`;
+      const suggestionValues = aiSuggestions[activeSuggestion].values;
+      // Case-insensitive lookup for keys
+      const foundValue = suggestionValues[id] || 
+                         Object.entries(suggestionValues).find(([k]) => k.toLowerCase() === id.toLowerCase())?.[1];
+      
+      if (foundValue) return foundValue;
+      
+      // Fallback ke analysis jika suggestion tidak punya key ini
+      const item = analysis?.find(a => a.id === id);
+      if (item?.found) return missingInputs[id] || item.extractedText;
+      return missingInputs[id] || `[Spesifikasi ${id} tidak dihasilkan AI]`;
     }
     
     // Original Flow
