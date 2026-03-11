@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Sparkles, Activity, CheckCircle2, AlertCircle, Code, FileText, Copy, ChevronDown, Layers, MessageSquare, Briefcase, Palette, Music, Terminal, Command, Loader2 } from 'lucide-react';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // --- KONFIGURASI WORKSPACE ---
 const workspaces = [
@@ -167,31 +171,55 @@ export default function App() {
     }
   }, [selectedFramework]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // --- 1. MOCK AI CALL: PROMPT DIAGNOSTIC X-RAY ---
-  const handleAnalyze = () => {
+  // --- 1. REAL AI CALL: PROMPT DIAGNOSTIC X-RAY ---
+  const handleAnalyze = async () => {
     if (!rawPrompt.trim() || isAnalyzing) return;
     setIsAnalyzing(true);
     setIsTranslated(false);
     setAiSuggestions([]);
     
-    // Simulasi delay AI (Mocking)
-    setTimeout(() => {
+    try {
       const currentElements = frameworkElements[selectedFramework];
+      const elementsDesc = currentElements.map(el => `${el.name} (ID: ${el.id})`).join(', ');
       
-      const newAnalysis = currentElements.map(el => {
-        // Logika mock sederhana: acak apakah ditemukan atau tidak, tapi cenderung menemukan jika prompt panjang
-        const isFound = rawPrompt.length > 20 ? Math.random() > 0.4 : false;
+      const prompt = `
+        Analyze the following user prompt for a ${activeWorkspace.name} task using the ${selectedFramework} framework.
+        The framework elements are: ${elementsDesc}.
         
+        User Prompt: "${rawPrompt}"
+        
+        For each element, determine if it's found in the prompt. If found, extract the relevant text.
+        Return ONLY a JSON array with this structure: [{"id": "element_id", "found": true/false, "extractedText": "..."}]
+      `;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      // Sanitasi response untuk parsing JSON aman
+      const jsonStart = text.indexOf('[');
+      const jsonEnd = text.lastIndexOf(']') + 1;
+      const jsonStr = text.substring(jsonStart, jsonEnd);
+      const aiResults = JSON.parse(jsonStr);
+
+      const newAnalysis = currentElements.map(el => {
+        const aiMatch = aiResults.find(r => r.id === el.id);
         return {
           ...el,
-          found: isFound,
-          extractedText: isFound ? `[Mock Extract] Ide terkait ${el.name} berhasil ditangkap dari input Anda.` : ''
+          found: aiMatch ? aiMatch.found : false,
+          extractedText: aiMatch && aiMatch.found ? aiMatch.extractedText : ''
         };
       });
 
       setAnalysis(newAnalysis);
+    } catch (error) {
+      console.error("AI Analysis Error:", error);
+      // Fallback ke mock jika error
+      const currentElements = frameworkElements[selectedFramework];
+      setAnalysis(currentElements.map(el => ({ ...el, found: false, extractedText: '' })));
+    } finally {
       setIsAnalyzing(false);
-    }, 1500);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -216,43 +244,57 @@ export default function App() {
     return Math.round(score);
   }, [analysis, missingInputs, rawPrompt]);
 
-  // --- 2. MOCK AI CALL: MAGIC EDIT SUGGESTIONS ---
-  const handleTranslate = () => {
+  // --- 2. REAL AI CALL: MAGIC EDIT SUGGESTIONS ---
+  const handleTranslate = async () => {
     setIsTranslated(true);
     setIsGeneratingSuggestions(true);
     setActiveSuggestion('original'); 
 
-    // Simulasi delay AI (Mocking)
-    setTimeout(() => {
+    try {
       const currentElements = frameworkElements[selectedFramework];
-      const sugg1 = { label: '✨ Profesional & Presisi', values: {} };
-      const sugg2 = { label: '🔥 Kreatif & Ekspresif', values: {} };
-      
-      currentElements.forEach(el => {
-        let baseVal = missingInputs[el.id] || '';
-        const foundInRaw = analysis?.find(a => a.id === el.id)?.found;
-        
-        if (!baseVal && foundInRaw) {
-           baseVal = "[Konteks diekstrak dari vibe asli]";
-        } else if (!baseVal) {
-           baseVal = "[Fleksibel]";
-        }
+      const contextData = currentElements.map(el => {
+        const val = getResolvedValue(el.id);
+        return `${el.name}: ${val}`;
+      }).join('\n');
 
-        if (el.id === 'role' || el.id === 'request') {
-           sugg1.values[el.id] = `Bertindaklah sebagai Senior ${activeWorkspace.name} Expert dengan pengalaman strategis 10+ tahun.`;
-           sugg2.values[el.id] = `Posisikan diri Anda sebagai Visionary ${activeWorkspace.name} Strategist yang berani bereksperimen.`;
-        } else if (el.id === 'context' || el.id === 'input') {
-           sugg1.values[el.id] = `[Profesional] Berdasarkan data dan analisis industri terkini: ${baseVal}`;
-           sugg2.values[el.id] = `[Kreatif] Mengambil inspirasi dari tren dinamis saat ini: ${baseVal}`;
-        } else {
-           sugg1.values[el.id] = `[Profesional] Hasil akhir harus mencerminkan struktur yang logis, presisi, dan elegan untuk ${el.name}.`;
-           sugg2.values[el.id] = `[Kreatif] Bebaskan imajinasi Anda untuk menciptakan ${el.name} yang menggugah emosi.`;
+      const prompt = `
+        Based on these framework elements extracted from a user's intent:
+        ${contextData}
+        
+        Workspace: ${activeWorkspace.name}
+        Framework: ${selectedFramework}
+        
+        Generate two alternative sets of refined content for each element.
+        Option 1: "✨ Profesional & Presisi" (High-level expertise, structured, formal)
+        Option 2: "🔥 Kreatif & Ekspresif" (Innovative, out-of-the-box, dynamic)
+        
+        Return ONLY a JSON object with this structure:
+        {
+          "suggestion1": {"role": "...", "context": "..."},
+          "suggestion2": {"role": "...", "context": "..."}
         }
-      });
+        Use the element IDs as keys inside each suggestion object.
+      `;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      const jsonStart = text.indexOf('{');
+      const jsonEnd = text.lastIndexOf('}') + 1;
+      const jsonStr = text.substring(jsonStart, jsonEnd);
+      const aiData = JSON.parse(jsonStr);
+
+      const sugg1 = { label: '✨ Profesional & Presisi', values: aiData.suggestion1 };
+      const sugg2 = { label: '🔥 Kreatif & Ekspresif', values: aiData.suggestion2 };
 
       setAiSuggestions([sugg1, sugg2]);
+    } catch (error) {
+      console.error("AI Generation Error:", error);
+      setAiSuggestions([]);
+    } finally {
       setIsGeneratingSuggestions(false);
-    }, 2000);
+    }
   };
 
   const copyToClipboard = (text) => {
