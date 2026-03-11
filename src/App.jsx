@@ -2,7 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Sparkles, Activity, CheckCircle2, AlertCircle, Code, FileText, Copy, ChevronDown, Layers, MessageSquare, Briefcase, Palette, Music, Terminal, Command, Loader2 } from 'lucide-react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+if (!apiKey) {
+  console.error("VITE_GEMINI_API_KEY is missing! Please check your .env file or GitHub Secrets.");
+}
+const genAI = new GoogleGenerativeAI(apiKey || "dummy_key");
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // --- KONFIGURASI WORKSPACE ---
@@ -192,13 +196,20 @@ export default function App() {
         Return ONLY a JSON array with this structure: [{"id": "element_id", "found": true/false, "extractedText": "..."}]
       `;
 
+      console.log("Gemini Request Prompt:", prompt);
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
+      console.log("Gemini Raw Response:", text);
       
       // Sanitasi response untuk parsing JSON aman
       const jsonStart = text.indexOf('[');
       const jsonEnd = text.lastIndexOf(']') + 1;
+      
+      if (jsonStart === -1 || jsonEnd === 0) {
+        throw new Error("AI did not return a valid JSON array. Response: " + text);
+      }
+
       const jsonStr = text.substring(jsonStart, jsonEnd);
       const aiResults = JSON.parse(jsonStr);
 
@@ -214,6 +225,7 @@ export default function App() {
       setAnalysis(newAnalysis);
     } catch (error) {
       console.error("AI Analysis Error:", error);
+      alert("AI Error: " + error.message + "\nCheck console for details.");
       // Fallback ke mock jika error
       const currentElements = frameworkElements[selectedFramework];
       setAnalysis(currentElements.map(el => ({ ...el, found: false, extractedText: '' })));
@@ -276,12 +288,19 @@ export default function App() {
         Use the element IDs as keys inside each suggestion object.
       `;
 
+      console.log("Gemini Suggestion Request:", prompt);
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
+      console.log("Gemini Suggestion Raw Response:", text);
       
       const jsonStart = text.indexOf('{');
       const jsonEnd = text.lastIndexOf('}') + 1;
+      
+      if (jsonStart === -1 || jsonEnd === 0) {
+        throw new Error("AI did not return a valid JSON object. Response: " + text);
+      }
+
       const jsonStr = text.substring(jsonStart, jsonEnd);
       const aiData = JSON.parse(jsonStr);
 
@@ -291,6 +310,7 @@ export default function App() {
       setAiSuggestions([sugg1, sugg2]);
     } catch (error) {
       console.error("AI Generation Error:", error);
+      alert("AI Suggestion Error: " + error.message);
       setAiSuggestions([]);
     } finally {
       setIsGeneratingSuggestions(false);
