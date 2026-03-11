@@ -2,35 +2,61 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Sparkles, Activity, CheckCircle2, AlertCircle, Code, FileText, Copy, ChevronDown, Layers, MessageSquare, Briefcase, Palette, Music, Terminal, Command, Loader2 } from 'lucide-react';
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
+const GEMINI_MODELS = [
+  'gemini-3-flash-preview',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+];
+
 const callGeminiAPI = async (payload) => {
   if (!apiKey) {
-    throw new Error("VITE_GEMINI_API_KEY is missing! Please check your .env file or GitHub Secrets.");
+    throw new Error('VITE_GEMINI_API_KEY is missing! Please check your .env file or GitHub Secrets.');
   }
-  
-  let response;
-  let lastErrorText = '';
+
   const delays = [1000, 2000, 4000, 8000, 16000];
-  
-  for (let i = 0; i < 6; i++) {
-    try {
-      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      if (response.ok) return await response.json();
-      
-      lastErrorText = await response.text();
-      // Don't retry on 4xx errors (except 429)
-      if (response.status >= 400 && response.status < 500 && response.status !== 429) break;
-    } catch(err) {
-      lastErrorText = err.message;
-      if (i === 5) throw err;
+
+  for (const modelName of GEMINI_MODELS) {
+    let response;
+    let lastErrorText = '';
+    let modelFailed = false;
+
+    for (let i = 0; i < 6; i++) {
+      try {
+        response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`[Gemini] Success with model: ${modelName}`);
+          return data;
+        }
+
+        lastErrorText = await response.text();
+        console.warn(`[Gemini] ${modelName} attempt ${i+1} failed: ${response.status}`);
+
+        // 404 = model not found, try next model immediately
+        if (response.status === 404) { modelFailed = true; break; }
+        // Other 4xx (except 429) = don't retry
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) break;
+      } catch (err) {
+        lastErrorText = err.message;
+        if (i === 5) throw err;
+      }
+      if (i < 5) await new Promise(r => setTimeout(r, delays[i]));
     }
-    if (i < 5) await new Promise(r => setTimeout(r, delays[i]));
+
+    if (!modelFailed) {
+      throw new Error(`API Error: ${lastErrorText || 'Unknown error'}`);
+    }
   }
-  throw new Error(`API Error ${response?.status || 'Unknown'}: ${lastErrorText || 'Network Error'}`);
+
+  throw new Error('All Gemini models failed. Please check your API key and network connection.');
 };
 
 // --- KONFIGURASI WORKSPACE ---
@@ -285,85 +311,108 @@ export default function App() {
     return Math.round(score);
   }, [analysis, missingInputs, rawPrompt]);
 
+  // --- HELPER: Get resolved value for an element ---
+  const getResolvedValue = (id, overrideActiveSuggestion, overrideAiSuggestions) => {
+    const aSuggestion = overrideActiveSuggestion !== undefined ? overrideActiveSuggestion : activeSuggestion;
+    const aSuggestions = overrideAiSuggestions !== undefined ? overrideAiSuggestions : aiSuggestions;
+
+    if (aSuggestion !== 'original' && aSuggestions[aSuggestion]) {
+      const vals = aSuggestions[aSuggestion].values;
+      // Case-insensitive key lookup
+      const found = vals[id] ??
+        Object.entries(vals).find(([k]) => k.toLowerCase() === id.toLowerCase())?.[1];
+      if (found) return found;
+    }
+
+    // Original flow
+    const item = analysis?.find(a => a.id === id);
+    if (item?.found) return missingInputs[id] || item.extractedText;
+    return missingInputs[id] || `[BUTUH INPUT: ${item?.name || id}]`;
+  };
+
   // --- 2. REAL AI CALL: MAGIC EDIT SUGGESTIONS ---
   const handleTranslate = async () => {
     setIsTranslated(true);
     setIsGeneratingSuggestions(true);
-    setActiveSuggestion('original'); 
+    setActiveSuggestion('original');
 
     try {
       const currentElements = frameworkElements[selectedFramework];
-      const contextData = currentElements.map(el => {
-        const val = getResolvedValue(el.id);
-        return `${el.name}: ${val}`;
-      }).join('\n');
+
+      // Build context directly from analysis + missingInputs (avoid circular dependency)
+      const contextLines = currentElements.map(el => {
+        const extracted = analysis?.find(a => a.id === el.id);
+        const val = missingInputs[el.id] ||
+          (extracted?.found ? extracted.extractedText : null) ||
+          '[belum diisi]';
+        return `${el.id}: ${val}`;
+      });
+
+      // Build explicit schema with element IDs
+      const elementIds = currentElements.map(el => `"${el.id}"`).join(', ');
+      const schemaExample = JSON.stringify(
+        Object.fromEntries(currentElements.map(el => [el.id, '...'])), null, 2
+      );
 
       const promptTxt = `
-        Based on these framework elements extracted from a user's intent:
-        ${contextData}
-        
-        Workspace: ${activeWorkspace.name}
-        Framework: ${selectedFramework}
-        
-        Generate two alternative sets of refined content for each element.
-        Option 1: "✨ Profesional & Presisi" (High-level expertise, structured, formal)
-        Option 2: "🔥 Kreatif & Ekspresif" (Innovative, out-of-the-box, dynamic)
-        
-        Return ONLY a JSON object with this structure:
-        {
-          "suggestion1": {"role": "...", "context": "..."},
-          "suggestion2": {"role": "...", "context": "..."}
-        }
-        Use the element IDs as keys inside each suggestion object.
-      `;
+You are a prompt engineering AI. Based on these framework element values:
+${contextLines.join('\n')}
 
-      console.log("Gemini Suggestion Request:", promptTxt);
-      
-      const payload = {
-        contents: [{ parts: [{ text: promptTxt }] }]
-      };
+Workspace: ${activeWorkspace.name}
+Framework: ${selectedFramework}
 
+Generate 2 alternative improvements for each element.
+- suggestion1: Professional & Precise style (structured, formal, high-expertise)
+- suggestion2: Creative & Expressive style (dynamic, innovative, out-of-the-box)
+
+Element IDs you MUST use as keys (exactly as written): ${elementIds}
+
+Return ONLY a valid JSON object with this EXACT structure (no markdown, no explanation):
+{
+  "suggestion1": ${schemaExample},
+  "suggestion2": ${schemaExample}
+}
+`;
+
+      console.log('[Gemini] Suggestion prompt:', promptTxt);
+
+      const payload = { contents: [{ parts: [{ text: promptTxt }] }] };
       const data = await callGeminiAPI(payload);
       const text = data.candidates[0].content.parts[0].text;
-      
-      console.log("Gemini Suggestion Raw Response:", text);
-      
+      console.log('[Gemini] Suggestion raw response:', text);
+
+      // Extract JSON from response
       const jsonStart = text.indexOf('{');
       const jsonEnd = text.lastIndexOf('}') + 1;
-      
-      if (jsonStart === -1 || jsonEnd === 0) {
-        throw new Error("AI did not return a valid JSON object. Check console logs for raw response.");
-      }
+      if (jsonStart === -1 || jsonEnd === 0) throw new Error('No JSON found in AI response.');
 
-      const jsonStr = text.substring(jsonStart, jsonEnd);
       let aiData;
       try {
-        aiData = JSON.parse(jsonStr);
+        aiData = JSON.parse(text.substring(jsonStart, jsonEnd));
       } catch (e) {
-        // Coba bersihkan karakter kontrol jika parsing gagal
-        aiData = JSON.parse(jsonStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, ""));
+        aiData = JSON.parse(text.substring(jsonStart, jsonEnd).replace(/[\u0000-\u001F\u007F-\u009F]/g, ''));
       }
 
-      // Pastikan struktur data konsisten (beberapa AI mungkin pakai camelCase atau lowercase)
-      const getSuggestion = (data, key) => {
-        const potentialKeys = [key, key.toLowerCase(), key.charAt(0).toUpperCase() + key.slice(1)];
-        for (const pk of potentialKeys) {
-          if (data[pk]) return data[pk];
+      const getKey = (obj, ...keys) => {
+        for (const k of keys) {
+          const found = Object.entries(obj).find(([key]) => key.toLowerCase() === k.toLowerCase());
+          if (found) return found[1];
         }
-        return null;
+        return {};
       };
 
-      const s1Values = getSuggestion(aiData, 'suggestion1') || getSuggestion(aiData, 'option1') || {};
-      const s2Values = getSuggestion(aiData, 'suggestion2') || getSuggestion(aiData, 'option2') || {};
+      const s1 = getKey(aiData, 'suggestion1', 'option1', 'professional');
+      const s2 = getKey(aiData, 'suggestion2', 'option2', 'creative');
 
-      const sugg1 = { label: '✨ Profesional & Presisi', values: s1Values };
-      const sugg2 = { label: '🔥 Kreatif & Ekspresif', values: s2Values };
-
-      console.log("Processed Suggestions:", [sugg1, sugg2]);
-      setAiSuggestions([sugg1, sugg2]);
+      const newSuggestions = [
+        { label: '✨ Profesional & Presisi', values: s1 },
+        { label: '🔥 Kreatif & Ekspresif', values: s2 },
+      ];
+      console.log('[Gemini] Processed suggestions:', newSuggestions);
+      setAiSuggestions(newSuggestions);
     } catch (error) {
-      console.error("AI Generation Error:", error);
-      alert("AI Suggestion Error: " + error.message);
+      console.error('AI Generation Error:', error);
+      alert('AI Suggestion Error:\n' + error.message);
       setAiSuggestions([]);
     } finally {
       setIsGeneratingSuggestions(false);
@@ -374,30 +423,6 @@ export default function App() {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const getResolvedValue = (id) => {
-    // Jika user memilih rekomendasi AI
-    if (activeSuggestion !== 'original' && aiSuggestions[activeSuggestion]) {
-      const suggestionValues = aiSuggestions[activeSuggestion].values;
-      // Case-insensitive lookup for keys
-      const foundValue = suggestionValues[id] || 
-                         Object.entries(suggestionValues).find(([k]) => k.toLowerCase() === id.toLowerCase())?.[1];
-      
-      if (foundValue) return foundValue;
-      
-      // Fallback ke analysis jika suggestion tidak punya key ini
-      const item = analysis?.find(a => a.id === id);
-      if (item?.found) return missingInputs[id] || item.extractedText;
-      return missingInputs[id] || `[Spesifikasi ${id} tidak dihasilkan AI]`;
-    }
-    
-    // Original Flow
-    const item = analysis?.find(a => a.id === id);
-    if (item?.found) {
-      return missingInputs[id] || item.extractedText;
-    }
-    return missingInputs[id] || `[BUTUH INPUT: ${item?.name}]`;
   };
 
   // --- DINAMIS OUTPUT GENERATOR ---
