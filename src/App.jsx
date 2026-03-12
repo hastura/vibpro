@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Sparkles, Activity, CheckCircle2, AlertCircle, Code, FileText, Copy, ChevronDown, Layers, MessageSquare, Briefcase, Palette, Music, Terminal, Command, Loader2 } from 'lucide-react';
+import { Sparkles, Activity, CheckCircle2, AlertCircle, Code, FileText, Copy, ChevronDown, Layers, MessageSquare, Briefcase, Palette, Music, Terminal, Command, Loader2, Building2 } from 'lucide-react';
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
 const GEMINI_MODELS = [
@@ -156,6 +156,18 @@ const workspaces = [
       { id: 'testing', label: 'Metodologi', type: 'select', options: ['Test-Driven Development (TDD)', 'Standard Vibe Coding', 'Strict Type Checking (TS)'] },
       { id: 'errorHandling', label: 'Error Handling', type: 'select', options: ['Strict (Fail Fast)', 'Graceful Degradation'] }
     ]
+  },
+  {
+    id: 'office',
+    name: 'Business & Office',
+    icon: Building2,
+    defaultFramework: 'RCGIO',
+    description: 'Untuk Marketing, Sales, Finance, Operations, dan Customer Service.',
+    extras: [
+      { id: 'businessRole', label: 'Fungsi Bisnis', type: 'select', options: ['Marketing & Social Media', 'Sales & CRM', 'Finance & Accounting', 'Operations & Logistics', 'Customer Service & Support'] },
+      { id: 'tone', label: 'Tone & Voice', type: 'select', options: ['Professional & Formal', 'Persuasive & Salesy', 'Empathetic & Caring', 'Direct & Concise', 'Internal Corporate'] },
+      { id: 'objective', label: 'Main Objective', type: 'text', placeholder: 'Misal: Penutupan deal, laporan bulanan, atau handling komplain' }
+    ]
   }
 ];
 
@@ -246,7 +258,8 @@ export default function App() {
   const placeholders = [
     "Tolong bikinin lirik rap boom bap tentang Jakarta, agak gelap tone-nya...",
     "Saya butuh rancangan PRD untuk sistem loyalitas pelanggan, kasih batasannya ya...",
-    "Buatkan desain UI wireframe e-commerce, posisikan dirimu sebagai senior UX..."
+    "Buatkan desain UI wireframe e-commerce, posisikan dirimu sebagai senior UX...",
+    "Bantu saya buat email penawaran ke client baru untuk jasa marketing agency..."
   ];
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
 
@@ -379,6 +392,7 @@ export default function App() {
 
   // --- 2. REAL AI CALL: MAGIC EDIT SUGGESTIONS ---
   const handleTranslate = async () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     setIsTranslated(true);
     setIsGeneratingSuggestions(true);
     setActiveSuggestion('original');
@@ -559,10 +573,10 @@ export default function App() {
                 <button
                   key={ws.id}
                   onClick={() => setActiveWorkspaceId(ws.id)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap glass-button ${
                     isActive 
                       ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 shadow-inner' 
-                      : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+                      : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/50'
                   }`}
                 >
                   <Icon className={`w-4 h-4 ${isActive ? 'text-indigo-400' : ''}`} />
@@ -579,8 +593,8 @@ export default function App() {
         {/* LEFT COLUMN: Input & Diagnostics */}
         <div className="space-y-6">
           
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
+          <div className="glass-panel rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 animate-glow"></div>
             
             <div className="mb-4 flex items-start justify-between">
               <div>
@@ -627,7 +641,7 @@ export default function App() {
           </div>
 
           {analysis && (
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="glass-panel rounded-2xl p-6 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500 border border-white/5">
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <Activity className="w-5 h-5 text-purple-400" />
                 Diagnostik Kesempurnaan
@@ -796,7 +810,7 @@ export default function App() {
 
         {/* RIGHT COLUMN: Output (Spec) */}
         <div className={`transition-all duration-700 ${isTranslated ? 'opacity-100 translate-x-0' : 'opacity-30 translate-x-4 pointer-events-none filter blur-sm'}`}>
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-xl overflow-hidden h-full flex flex-col min-h-[600px]">
+          <div className="glass-panel rounded-2xl shadow-2xl overflow-hidden h-full flex flex-col min-h-[600px] border border-white/5">
             
             <div className="bg-indigo-950/40 border-b border-indigo-900/50 p-3 flex items-center gap-3 overflow-x-auto custom-scrollbar">
               <Sparkles className="w-4 h-4 text-indigo-400 flex-shrink-0" />
